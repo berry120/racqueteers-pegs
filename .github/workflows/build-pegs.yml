@@ -1,0 +1,61 @@
+name: Build pegs
+
+# Rebuild the stl/ and 3mf/ folders whenever the name list (or anything that
+# affects the output) changes on main. You can also run it by hand from the
+# Actions tab ("Run workflow").
+on:
+  push:
+    branches: [main]
+    paths:
+      - names.txt
+      - peg.scad
+      - template.3mf
+      - make_pegs.py
+      - .github/workflows/build-pegs.yml
+  workflow_dispatch:
+
+# The job commits the generated files back to the repository.
+permissions:
+  contents: write
+
+# Run one build at a time so two quick edits can't push over each other.
+concurrency:
+  group: build-pegs
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install OpenSCAD and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openscad fonts-liberation
+
+      - name: Generate STL and 3MF files
+        run: >
+          python3 make_pegs.py
+          --template template.3mf
+          --scad peg.scad
+          --names-file names.txt
+          --stl-dir stl
+          --3mf-dir 3mf
+          --sync
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A stl 3mf
+          if git diff --cached --quiet; then
+            echo "Outputs already match names.txt - nothing to commit."
+          else
+            git commit -m "Update pegs from names.txt"
+            git push origin main
+          fi

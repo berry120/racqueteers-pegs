@@ -1,0 +1,3 @@
+# Never touch line endings of the generated binary files.
+*.stl binary
+*.3mf binary
