@@ -19,7 +19,7 @@ notch_offset = 20;  // from the X=0 end
 notch_depth  = 3;   // cut up from the body's bottom face
 
 // Colour layer: one 0.2 mm layer on top (colour change at Z = top_z)
-layer_h     = 0.2;
+layer_h     = 0.4;
 block_len   = 30;   // coloured block at the X=0 end
 text_start  = 35;   // name area starts here (first 35 mm clear of text)
 
