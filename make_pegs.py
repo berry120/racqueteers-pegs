@@ -31,6 +31,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 MODEL_SETTINGS = "Metadata/model_settings.config"
+MAIN_MODEL = "3D/3dmodel.model"
 MIN_LEGIBLE_SIZE = 4.0  # mm; warn below this text size
 
 
@@ -110,6 +111,19 @@ def template_mesh_extent(text):
     return (x1 - x0, y1 - y0, z1 - z0)
 
 
+BUILD_ITEM_RE = re.compile(r'(<item objectid="\d+"[^>]*transform="1 0 0 0 1 0 0 0 1 \S+ \S+ )(\S+)(")')
+ASSEMBLE_RE = re.compile(r'(<assemble_item object_id="\d+" instance_id="\d+" transform="1 0 0 0 1 0 0 0 1 0 0 )(\S+)(")')
+SOURCE_Z_RE = re.compile(r'(<metadata key="source_offset_z" value=")([^"]+)(")')
+
+
+def set_z_offset(text, regex, new_z):
+    """Set the object's resting height (half its height, so it sits on the bed), but leave
+    the text untouched when it already matches so unchanged templates stay byte-identical."""
+    def sub(m):
+        return m.group(0) if abs(float(m.group(2)) - new_z) < 1e-4 else f"{m.group(1)}{fmt(new_z)}{m.group(3)}"
+    return regex.sub(sub, text, count=1)
+
+
 def fmt(v):
     s = format(v, ".7g")
     return "0" if s in ("-0", "-0.0") else s
@@ -137,13 +151,18 @@ def make_3mf(template, out_path, verts, tris, display_name):
 
         (x0, x1), (y0, y1), (z0, z1) = bbox(verts)
         size = (x1 - x0, y1 - y0, z1 - z0)
-        if any(abs(a - b) > 0.01 for a, b in zip(size, t_size)):
+        # Length and width must match the template (placement). The height may differ,
+        # e.g. a thicker text layer; the object's resting height is adjusted below.
+        # The colour-change stop stays where the template has it, so it must still be
+        # at the first layer above the body.
+        if any(abs(a - b) > 0.01 for a, b in zip(size[:2], t_size[:2])):
             raise RuntimeError(
-                "New part's bounding box %s differs from the template's %s. The template's "
-                "placement and colour-change height would no longer match - rebuild the template."
-                % (tuple(round(s, 3) for s in size), tuple(round(s, 3) for s in t_size))
+                "New part's length/width %s differs from the template's %s. The template's "
+                "placement would no longer match - rebuild the template."
+                % (tuple(round(s, 3) for s in size[:2]), tuple(round(s, 3) for s in t_size[:2]))
             )
         centre = ((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+        half_h = size[2] / 2
 
         new_obj = MESH_RE.sub(lambda m: build_mesh_xml(verts, tris, centre), obj_text, count=1)
 
@@ -151,6 +170,9 @@ def make_3mf(template, out_path, verts, tris, display_name):
         settings = re.sub(r'face_count="\d+"', f'face_count="{len(tris)}"', settings)
         safe = escape(display_name, {'"': "&quot;"})
         settings = re.sub(r'(<metadata key="name" value=")[^"]*(")', rf"\g<1>{safe}\g<2>", settings)
+        settings = set_z_offset(settings, SOURCE_Z_RE, half_h)
+        settings = set_z_offset(settings, ASSEMBLE_RE, half_h)
+        main_model = set_z_offset(zin.read(MAIN_MODEL).decode("utf-8"), BUILD_ITEM_RE, half_h)
 
         with zipfile.ZipFile(out_path, "w") as zout:
             for info in zin.infolist():       # keep original order and compression
@@ -159,6 +181,8 @@ def make_3mf(template, out_path, verts, tris, display_name):
                     data = new_obj.encode("utf-8")
                 elif info.filename == MODEL_SETTINGS:
                     data = settings.encode("utf-8")
+                elif info.filename == MAIN_MODEL:
+                    data = main_model.encode("utf-8")
                 zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
                 zi.compress_type = info.compress_type
                 zi.external_attr = info.external_attr
